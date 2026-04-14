@@ -13,7 +13,7 @@ class PlayerAgent:
     - negamax/alpha-beta on non-search board moves
     - rat belief tracking with transition matrix
     - rat search decided after board search with thresholded expectiminimax
-    - tuned to reduce passive plain moves when behind or close
+    - tuned to avoid extreme overreactions in move ordering
     """
 
     def __init__(self, board, transition_matrix=None, time_left: Callable = None):
@@ -93,7 +93,6 @@ class PlayerAgent:
 
         turns_left = board.player_worker.turns_left
         score_diff = board.player_worker.get_points() - board.opponent_worker.get_points()
-        winning_big = score_diff >= 8
 
         sorted_probs = np.sort(self.belief)
         second_prob = float(sorted_probs[-2]) if len(sorted_probs) >= 2 else 0.0
@@ -105,7 +104,7 @@ class PlayerAgent:
             self.last_completed_depth = 0
             return move.Move.search(best_loc)
 
-        valid_moves = self._order_moves(board, valid_moves, self.belief, score_diff)
+        valid_moves = self._order_moves(board, valid_moves, self.belief)
 
         remaining = time_left()
         turns_left_safe = max(1, turns_left)
@@ -248,11 +247,6 @@ class PlayerAgent:
             current_opp_lane,
             best_board_points,
         )
-
-        if winning_big and turns_left <= 10:
-            search_threshold += 0.04
-
-        search_threshold = max(0.35, min(0.85, search_threshold))
         self.last_search_threshold = search_threshold
 
         if best_prob >= search_threshold:
@@ -281,15 +275,6 @@ class PlayerAgent:
             search_gain -= 3.0
         elif turns_left <= 8 and score_diff < 0:
             search_gain += 2.0
-
-        if score_diff <= -4 and best_board_points >= 2 and best_prob < 0.68:
-            search_gain -= 12.0
-
-        if score_diff <= -6 and current_opp_lane >= 4 and best_prob < 0.72:
-            search_gain -= 10.0
-
-        if winning_big and turns_left <= 10:
-            search_gain -= 4.0
 
         if (
             (current_opp_threat >= 15 and threat_reduction >= 6 and best_prob < 0.70)
@@ -445,8 +430,7 @@ class PlayerAgent:
         if not valid_moves:
             return self._evaluate(board_obj, belief_vec)
 
-        local_score_diff = board_obj.player_worker.get_points() - board_obj.opponent_worker.get_points()
-        valid_moves = self._order_moves(board_obj, valid_moves, belief_vec, local_score_diff)
+        valid_moves = self._order_moves(board_obj, valid_moves, belief_vec)
         next_belief = self._predict_belief(belief_vec)
 
         best = -float("inf")
@@ -607,7 +591,7 @@ class PlayerAgent:
         if score_diff > 0:
             threshold += 0.06
         elif score_diff < 0:
-            threshold -= 0.02
+            threshold -= 0.04
 
         if opp_lane >= 6 or opp_threat >= 15 or opp_setup_threat >= 15:
             threshold += 0.10
@@ -652,11 +636,10 @@ class PlayerAgent:
 
         return -self._evaluate(branch, next_belief)
 
-    def _order_moves(self, board_obj: board.Board, moves, belief_vec=None, score_diff: int = 0):
+    def _order_moves(self, board_obj: board.Board, moves, belief_vec=None):
         current_opp_lane = self._max_carpet_roll_from_here(board_obj, enemy=True)
         current_territory = self._territory_balance(board_obj)
         turns_left = board_obj.player_worker.turns_left
-        winning_big = score_diff >= 8
 
         def move_key(mv):
             score = 0.0
@@ -667,25 +650,11 @@ class PlayerAgent:
             if mv.move_type == enums.MoveType.CARPET:
                 score += 10.0 * self._carpet_value(mv.roll_length)
                 if mv.roll_length == 1:
-                    score -= 60.0
+                    score -= 18.0
             elif mv.move_type == enums.MoveType.PRIME:
                 score += 7.0
             elif mv.move_type == enums.MoveType.PLAIN:
                 score += 2.0
-
-            if score_diff <= -4 and mv.move_type == enums.MoveType.PLAIN:
-                score -= 14.0
-            elif abs(score_diff) <= 3 and mv.move_type == enums.MoveType.PLAIN:
-                score -= 6.0
-
-            if winning_big:
-                if mv.move_type == enums.MoveType.PLAIN:
-                    score -= 4.0
-                elif mv.move_type == enums.MoveType.CARPET and mv.roll_length >= 3:
-                    score += 4.0
-
-            if abs(score_diff) <= 3 and mv.move_type == enums.MoveType.CARPET and mv.roll_length >= 2:
-                score += 6.0
 
             next_loc = self._resulting_location(board_obj, mv)
             if next_loc is not None:
@@ -714,22 +683,15 @@ class PlayerAgent:
             score -= 4.0 * opp_setup_reply
             score -= 10.0 * self._lane_threat_value(opp_lane_after)
 
-            if current_opp_lane >= 4 and lane_cut <= 0 and immediate_points <= 1.0:
-                score -= 14.0
-
             if lane_cut > 0:
                 score += 18.0 * lane_cut
-                if current_opp_lane >= 4:
-                    score += 10.0 * lane_cut
 
             if opp_lane_after >= 7:
-                score -= 85.0
+                score -= 80.0
             elif opp_lane_after >= 6:
-                score -= 55.0
+                score -= 45.0
             elif opp_lane_after >= 5:
-                score -= 28.0
-            elif opp_lane_after >= 4:
-                score -= 10.0
+                score -= 20.0
 
             if turns_left <= 8:
                 low_value = (
@@ -741,12 +703,7 @@ class PlayerAgent:
                     and territory_gain <= 1.0
                 )
                 if low_value:
-                    penalty = 45.0 if turns_left > 5 else 70.0
-                    if score_diff <= -4 and mv.move_type == enums.MoveType.PLAIN:
-                        penalty += 12.0
-                    elif abs(score_diff) <= 3 and mv.move_type == enums.MoveType.PLAIN:
-                        penalty += 6.0
-                    score -= penalty
+                    score -= 45.0 if turns_left > 5 else 70.0
 
             elif turns_left <= 16:
                 low_value_mid = (
@@ -759,19 +716,12 @@ class PlayerAgent:
                 )
                 if low_value_mid:
                     if mv.move_type == enums.MoveType.PLAIN:
-                        penalty = 30.0
-                        if score_diff <= -4:
-                            penalty += 12.0
-                        elif abs(score_diff) <= 3:
-                            penalty += 6.0
-                        score -= penalty
+                        score -= 25.0
                     else:
                         score -= 10.0
 
             if immediate_points >= 4.0:
                 score += 10.0
-                if abs(score_diff) <= 3:
-                    score += 8.0
             if lane_cut >= 1:
                 score += 12.0
             if lane_cut >= 2:

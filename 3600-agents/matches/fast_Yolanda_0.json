@@ -1,0 +1,1 @@
+{"pos": [], "a_points": [], "b_points": [], "a_turns_left": [], "b_turns_left": [], "a_time_left": [], "b_time_left": [], "rat_caught": [], "left_behind": [], "errlog_a": "", "errlog_b": "Timeout", "start_time": 240, "start_moves": 80, "turn_count": 0, "result": 0, "reason": "FAILED_INIT", "trapdoors": [[5, 7]], "spawn_a": [3, 3], "spawn_b": [4, 3]}
